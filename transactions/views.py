@@ -3,7 +3,6 @@ from rest_framework.response import Response
 from rest_framework import status
 from .models import Account
 from .serializers import AccountDetailSerializer
-
 from django.db import transaction
 from .serializers import AmountInputSerializer, TransactionResponseSerializer
 
@@ -88,6 +87,79 @@ class DepositView(APIView):
                 
                 # Perform the deposit
                 account.balance += amount
+                account.save()  # Durability: PostgreSQL commits to disk
+                
+        except Account.DoesNotExist:
+            # Handles Section 2.3: Unknown account
+            return Response(
+                {
+                    'status': 'error',
+                    'error_code': 'UNKNOWN_ACCOUNT',
+                    'message': f'Account {account_number} does not exist'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Step 3: Return success response in assignment format
+        response_serializer = TransactionResponseSerializer({
+            'status': 'success',
+            'account': account.account_number,
+            'balance': account.balance
+        })
+        
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+
+class WithdrawView(APIView):
+    """
+    Withdraw API
+    POST /api/accounts/<account_number>/withdraw/
+    
+    Subtracts the specified amount from the account balance.
+    Guarantees ACID properties:
+    - Atomicity: Uses transaction.atomic()
+    - Consistency: Balance never negative (checked before withdrawal)
+    - Isolation: Uses select_for_update() to lock the row
+    - Durability: PostgreSQL writes to disk before response
+    """
+    
+    def post(self, request, account_number):
+        # Step 1: Validate input (handles missing fields, invalid amounts)
+        serializer = AmountInputSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {
+                    'status': 'error',
+                    'error_code': 'INVALID_INPUT',
+                    'message': serializer.errors
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        amount = serializer.validated_data['amount']
+        
+        # Step 2: Execute transaction with ACID guarantees
+        try:
+            with transaction.atomic():
+                # Lock the account row for Isolation (prevents lost updates)
+                account = Account.objects.select_for_update().get(
+                    account_number=account_number
+                )
+                
+                # Check for sufficient funds (Consistency: no negative balances)
+                if account.balance < amount:
+                    return Response(
+                        {
+                            'status': 'error',
+                            'error_code': 'INSUFFICIENT_FUNDS',
+                            'message': f'Account {account_number} has insufficient funds. '
+                                      f'Current balance: {account.balance}, requested: {amount}'
+                        },
+                        status=status.HTTP_422_UNPROCESSABLE_ENTITY
+                    )
+                
+                # Perform the withdrawal
+                account.balance -= amount
                 account.save()  # Durability: PostgreSQL commits to disk
                 
         except Account.DoesNotExist:

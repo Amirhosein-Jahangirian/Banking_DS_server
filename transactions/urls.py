@@ -11,4 +11,8 @@ urlpatterns = [
 
     # Deposit
     path('accounts/<str:account_number>/deposit/', views.DepositView.as_view(), name='deposit'),
+    
+    # Withdraw
+    path('accounts/<str:account_number>/withdraw/', views.WithdrawView.as_view(), name='withdraw'),
+
 ]

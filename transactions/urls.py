@@ -8,4 +8,7 @@ urlpatterns = [
 
     # Balance Inquiry
     path('accounts/<str:account_number>/', views.BalanceInquiryView.as_view(), name='balance_inquiry'),
+
+    # Deposit
+    path('accounts/<str:account_number>/deposit/', views.DepositView.as_view(), name='deposit'),
 ]

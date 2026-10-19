@@ -7,19 +7,25 @@ from django.db import transaction
 from .serializers import AmountInputSerializer, TransactionResponseSerializer
 
 
-
 class BalanceInquiryView(APIView):
     """
     Balance Inquiry API
     GET /api/accounts/<account_number>/
-    
+
     Returns the current balance of the specified account.
     """
-    
+
     def get(self, request, account_number):
         try:
             account = Account.objects.get(account_number=account_number)
         except Account.DoesNotExist:
+            # Populate transaction data for logging
+            request.transaction_data.update({
+                'action': 'inquiry',
+                'account': account_number,
+                'result': 'error:unknown_account',
+                'balance': 'N/A'
+            })
             # Handles Section 2.3: Unknown account error
             return Response(
                 {
@@ -29,31 +35,37 @@ class BalanceInquiryView(APIView):
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
         serializer = AccountDetailSerializer(account)
+        # Populate transaction data for logging
+        request.transaction_data.update({
+            'action': 'inquiry',
+            'account': account.account_number,
+            'result': 'success',
+            'balance': account.balance
+        })
         return Response(serializer.data, status=status.HTTP_200_OK)
-    
-    
+
+
 class AccountListView(APIView):
     """
     List All Accounts API
     GET /api/accounts/
-    
+
     Returns a list of all accounts with their balances.
     """
-    
+
     def get(self, request):
         accounts = Account.objects.all().order_by('account_number')
         serializer = AccountDetailSerializer(accounts, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
-    
-    
+
 
 class DepositView(APIView):
     """
     Deposit API
     POST /api/accounts/<account_number>/deposit/
-    
+
     Adds the specified amount to the account balance.
     Guarantees ACID properties:
     - Atomicity: Uses transaction.atomic()
@@ -61,11 +73,18 @@ class DepositView(APIView):
     - Isolation: Uses select_for_update() to lock the row
     - Durability: PostgreSQL writes to disk before response
     """
-    
+
     def post(self, request, account_number):
         # Step 1: Validate input (handles missing fields, invalid amounts)
         serializer = AmountInputSerializer(data=request.data)
         if not serializer.is_valid():
+            request.transaction_data.update({
+                'action': 'deposit',
+                'account': account_number,
+                'result': 'error:invalid_input',
+                'balance': 'N/A'
+            })
+            
             return Response(
                 {
                     'status': 'error',
@@ -74,9 +93,9 @@ class DepositView(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         amount = serializer.validated_data['amount']
-        
+
         # Step 2: Execute transaction with ACID guarantees
         try:
             with transaction.atomic():
@@ -84,13 +103,20 @@ class DepositView(APIView):
                 account = Account.objects.select_for_update().get(
                     account_number=account_number
                 )
-                
+
                 # Perform the deposit
                 account.balance += amount
                 account.save()  # Durability: PostgreSQL commits to disk
-                
+
         except Account.DoesNotExist:
             # Handles Section 2.3: Unknown account
+            request.transaction_data.update({
+                'action': 'deposit',
+                'account': account_number,
+                'result': 'error:unknown_account',
+                'balance': 'N/A'
+            })
+            
             return Response(
                 {
                     'status': 'error',
@@ -99,7 +125,7 @@ class DepositView(APIView):
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
         # Step 3: Return success response in assignment format
         response_serializer = TransactionResponseSerializer({
             'status': 'success',
@@ -107,6 +133,13 @@ class DepositView(APIView):
             'balance': account.balance
         })
         
+        request.transaction_data.update({
+            'action': 'deposit',
+            'account': account.account_number,
+            'result': 'success',
+            'balance': account.balance
+        })
+
         return Response(response_serializer.data, status=status.HTTP_200_OK)
 
 
@@ -114,7 +147,7 @@ class WithdrawView(APIView):
     """
     Withdraw API
     POST /api/accounts/<account_number>/withdraw/
-    
+
     Subtracts the specified amount from the account balance.
     Guarantees ACID properties:
     - Atomicity: Uses transaction.atomic()
@@ -122,11 +155,20 @@ class WithdrawView(APIView):
     - Isolation: Uses select_for_update() to lock the row
     - Durability: PostgreSQL writes to disk before response
     """
-    
+
     def post(self, request, account_number):
         # Step 1: Validate input (handles missing fields, invalid amounts)
         serializer = AmountInputSerializer(data=request.data)
         if not serializer.is_valid():
+            
+        
+            request.transaction_data.update({
+                'action': 'withdraw',
+                'account': account_number,
+                'result': 'error:invalid_input',
+                'balance': 'N/A'
+            })
+            
             return Response(
                 {
                     'status': 'error',
@@ -135,9 +177,9 @@ class WithdrawView(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         amount = serializer.validated_data['amount']
-        
+
         # Step 2: Execute transaction with ACID guarantees
         try:
             with transaction.atomic():
@@ -145,9 +187,16 @@ class WithdrawView(APIView):
                 account = Account.objects.select_for_update().get(
                     account_number=account_number
                 )
-                
+
                 # Check for sufficient funds (Consistency: no negative balances)
                 if account.balance < amount:
+                    request.transaction_data.update({
+                        'action': 'withdraw',
+                        'account': account_number,
+                        'result': 'error:insufficient_funds',
+                        'balance': account.balance
+                    })
+                    
                     return Response(
                         {
                             'status': 'error',
@@ -157,13 +206,20 @@ class WithdrawView(APIView):
                         },
                         status=status.HTTP_422_UNPROCESSABLE_ENTITY
                     )
-                
+
                 # Perform the withdrawal
                 account.balance -= amount
                 account.save()  # Durability: PostgreSQL commits to disk
-                
+
         except Account.DoesNotExist:
             # Handles Section 2.3: Unknown account
+            request.transaction_data.update({
+                'action': 'withdraw',
+                'account': account_number,
+                'result': 'error:unknown_account',
+                'balance': 'N/A'
+            })
+            
             return Response(
                 {
                     'status': 'error',
@@ -172,7 +228,7 @@ class WithdrawView(APIView):
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
         # Step 3: Return success response in assignment format
         response_serializer = TransactionResponseSerializer({
             'status': 'success',
@@ -180,4 +236,11 @@ class WithdrawView(APIView):
             'balance': account.balance
         })
         
+        request.transaction_data.update({
+            'action': 'withdraw',
+            'account': account.account_number,
+            'result': 'success',
+            'balance': account.balance
+        })
+
         return Response(response_serializer.data, status=status.HTTP_200_OK)

@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -49,6 +50,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'transactions.middleware.TransactionLoggingMiddleware',
+
 ]
 
 ROOT_URLCONF = 'banking_server.urls'
@@ -126,3 +129,34 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# Base directory for log files
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'transaction_format': {
+            'format': '{asctime}  req={request_id}  ip={ip}  action={action}  account={account}  result={result}  balance={balance}  latency={latency}ms',
+            'style': '{',
+            'datefmt': '%Y-%m-%dT%H:%M:%S',
+        },
+    },
+    'handlers': {
+        'transaction_file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': os.path.join(BASE_DIR, 'transaction_logs.log'),
+            'formatter': 'transaction_format',
+        },
+    },
+    'loggers': {
+        'banking_transactions': {
+            'handlers': ['transaction_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}

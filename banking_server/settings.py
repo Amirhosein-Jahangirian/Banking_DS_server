@@ -12,10 +12,15 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 import os
+from dotenv import load_dotenv
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+load_dotenv(BASE_DIR / '.venv')
+
+MAX_CONCURRENT_CLIENTS = int(os.environ.get('MAX_CONCURRENT_CLIENTS', '100'))
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
@@ -130,6 +135,9 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+REST_FRAMEWORK = {
+    'EXCEPTION_HANDLER': 'transactions.exceptions.custom_exception_handler',
+}
 
 # Base directory for log files
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

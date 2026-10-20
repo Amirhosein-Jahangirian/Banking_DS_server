@@ -2,9 +2,13 @@ import logging
 import time
 import uuid
 from django.utils.deprecation import MiddlewareMixin
+import threading
+from django.conf import settings
+from django.http import HttpResponse
 
 logger = logging.getLogger('banking_transactions')
-
+_active_requests = 0
+_request_lock = threading.Lock()
 
 class TransactionLoggingMiddleware(MiddlewareMixin):
     """
@@ -17,6 +21,17 @@ class TransactionLoggingMiddleware(MiddlewareMixin):
     """
     
     def process_request(self, request):
+        global _active_requests
+        
+        # --- Concurrent Client Limiting (Section 2.1) ---
+        with _request_lock:
+            if _active_requests >= settings.MAX_CONCURRENT_CLIENTS:
+                # Server is at capacity, reject the request
+                return HttpResponse(
+                    "Server at maximum capacity. Please try again later.",
+                    status=503
+                )
+            _active_requests += 1
         # Start timer for latency calculation
         request.start_time = time.time()
         
@@ -35,6 +50,11 @@ class TransactionLoggingMiddleware(MiddlewareMixin):
         }
     
     def process_response(self, request, response):
+        global _active_requests
+        
+        # --- Decrement Active Request Counter ---
+        with _request_lock:
+            _active_requests -= 1
         # Only log API endpoints (not admin, static files, etc.)
         if not request.path.startswith('/api/'):
             return response
@@ -54,6 +74,8 @@ class TransactionLoggingMiddleware(MiddlewareMixin):
             result = 'error:insufficient_funds'
         elif response.status_code == 400:
             result = 'error:invalid_input'
+        elif response.status_code == 503:
+            result = 'error:server_capacity'
         else:
             result = f'error:{response.status_code}'
         

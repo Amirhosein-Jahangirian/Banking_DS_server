@@ -25,13 +25,20 @@ class TransactionLoggingMiddleware(MiddlewareMixin):
         
         # --- Concurrent Client Limiting (Section 2.1) ---
         with _request_lock:
+            print(f"[DEBUG] Active requests: {_active_requests} / Max: {settings.MAX_CONCURRENT_CLIENTS}")
+
             if _active_requests >= settings.MAX_CONCURRENT_CLIENTS:
+                print(f"[DEBUG] ❌ REJECTING request (Limit reached!)")
                 # Server is at capacity, reject the request
+                request._counter_incremented = False  # Mark that we didn't increment
                 return HttpResponse(
                     "Server at maximum capacity. Please try again later.",
                     status=503
                 )
             _active_requests += 1
+            request._counter_incremented = True  # Mark that we did increment
+            print(f"[DEBUG] ✅ ACCEPTED request. New count: {_active_requests}")
+
         # Start timer for latency calculation
         request.start_time = time.time()
         
@@ -53,10 +60,18 @@ class TransactionLoggingMiddleware(MiddlewareMixin):
         global _active_requests
         
         # --- Decrement Active Request Counter ---
-        with _request_lock:
-            _active_requests -= 1
+        # Only decrement if we actually incremented in process_request
+        if getattr(request, '_counter_incremented', False):
+            with _request_lock:
+                _active_requests -= 1
+        
         # Only log API endpoints (not admin, static files, etc.)
         if not request.path.startswith('/api/'):
+            return response
+        
+        # Handle requests that were rejected early (don't have start_time)
+        if not hasattr(request, 'start_time'):
+            # This request was rejected before we could set up logging data
             return response
         
         # Calculate latency
@@ -83,8 +98,8 @@ class TransactionLoggingMiddleware(MiddlewareMixin):
         logger.info(
             "Transaction logged",
             extra={
-                'request_id': request.request_id,
-                'ip': request.client_ip,
+                'request_id': getattr(request, 'request_id', 'unknown'),
+                'ip': getattr(request, 'client_ip', 'unknown'),
                 'action': tx_data.get('action', 'unknown'),
                 'account': tx_data.get('account', 'unknown'),
                 'result': result,
@@ -94,6 +109,7 @@ class TransactionLoggingMiddleware(MiddlewareMixin):
         )
         
         return response
+    
     
     def get_client_ip(self, request):
         """Extract client IP address from request"""

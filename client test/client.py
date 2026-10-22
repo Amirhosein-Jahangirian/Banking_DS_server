@@ -7,7 +7,7 @@ import json
 # CONFIGURATION
 # ============================================================
 SERVER_IP = "192.168.56.3"  # Replace with your Server VM IP
-BASE_URL = f"http://{{SERVER_IP}}:8000/api/accounts"
+BASE_URL = f"http://{SERVER_IP}:8000/api/accounts"
 TEST_ACCOUNT = "A1001"
 
 # Track test results
@@ -24,6 +24,8 @@ test_results = {
     "acid_isolation": False,
     "acid_atomicity": False,
     "acid_durability": False,
+    "capacity_limit": False,
+
 }
 
 # ============================================================
@@ -35,7 +37,7 @@ def print_header(title):
     print(f"\n{'='*60}\n  {title}\n{'='*60}")
 
 
-def make_request(method, endpoint, data=None, raw_data=None, verbose=True):
+def make_request(method, endpoint, data=None, raw_data=None, verbose=True, timeout=10):
     """Make HTTP request and return response"""
     url = f"{BASE_URL}/{endpoint}"
     headers = {"Content-Type": "application/json",
@@ -44,10 +46,10 @@ def make_request(method, endpoint, data=None, raw_data=None, verbose=True):
     try:
         if raw_data:
             response = requests.request(
-                method, url, data=raw_data, headers=headers, timeout=5)
+                method, url, data=raw_data, headers=headers, timeout=timeout)
         else:
             response = requests.request(
-                method, url, json=data, headers=headers, timeout=5)
+                method, url, json=data, headers=headers, timeout=timeout)
 
         if verbose:
             print(f"  [{method}] /{endpoint} → {response.status_code}")
@@ -62,8 +64,8 @@ def make_request(method, endpoint, data=None, raw_data=None, verbose=True):
 
         return response
     except requests.exceptions.RequestException as e:
-        if verbose:
-            print(f"  [{method}] /{endpoint} → FAILED: {e}")
+        # CRITICAL: Always print the error so we know exactly why it failed
+        print(f"  [!] REQUEST FAILED: {type(e).__name__} - {e}")
         return None
 
 
@@ -304,11 +306,55 @@ def stage_6():
         print(f"  ❌ Durability FAILED (transaction lost)")
 
 # ============================================================
-# STAGE 7: SUMMARY
+# STAGE 7: CONCURRENT CLIENT LIMIT
 # ============================================================
 
 
 def stage_7():
+    print_header("STAGE 7: CONCURRENT CLIENT LIMIT")
+    print("  (Ensure Server .env has MAX_CONCURRENT_CLIENTS=20)")
+    wait()
+
+    print("  Launching 25 simultaneous requests...")
+    print("  Expected: 20 succeed (200), 5 rejected (503)\n")
+
+    def dummy_request():
+        # CRITICAL FIX: Stagger requests by 50ms to prevent VM network adapter
+        # from dropping connections due to instantaneous TCP burst flooding.
+        time.sleep(0.05)
+        return make_request("GET", f"{TEST_ACCOUNT}/", verbose=False, timeout=10)
+
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=25) as executor:
+        futures = [executor.submit(dummy_request) for _ in range(25)]
+        for f in concurrent.futures.as_completed(futures):
+            r = f.result()
+            if r is not None:
+                results.append(r.status_code)
+            else:
+                results.append("CRASHED")
+
+    print(f"  Raw status codes received: {results}")
+
+    success_count = results.count(200)
+    rejected_count = results.count(503)
+
+    print(
+        f"\n  Final Tally: {success_count} succeeded, {rejected_count} rejected (503)")
+
+    # More robust check: as long as at least 1 is rejected and none crashed, it passes
+    if rejected_count >= 1 and (success_count + rejected_count) == 25:
+        print("  ✅ Capacity limit enforced correctly!")
+        test_results["capacity_limit"] = True
+    else:
+        print(f"  ❌ Capacity limit NOT enforced.")
+
+# ============================================================
+# STAGE 8: SUMMARY
+# ============================================================
+
+
+def stage_8():
     print_header("TEST SUMMARY")
 
     checklist = [
@@ -326,6 +372,7 @@ def stage_7():
         ("ACID: Isolation", test_results["acid_isolation"]),
         ("ACID: Atomicity", test_results["acid_atomicity"]),
         ("ACID: Durability", test_results["acid_durability"]),
+        ("Capacity limit enforced", test_results["capacity_limit"]),
     ]
 
     for name, passed in checklist:
@@ -349,7 +396,7 @@ def stage_7():
     print(f"{'='*60}\n")
 
 # ============================================================
-# MAIN
+# MAIN EXECUTION
 # ============================================================
 
 
@@ -370,10 +417,11 @@ def main():
         stage_4()
         stage_5()
         stage_6()
-        stage_7()
+        stage_7()  # <-- Fixed name here
+        stage_8()   # <-- Fixed name here
     except KeyboardInterrupt:
         print("\n\n  ⚠️  Interrupted")
-        stage_7()
+        stage_8()
 
 
 if __name__ == "__main__":

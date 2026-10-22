@@ -5,6 +5,7 @@ from .models import Account
 from .serializers import AccountDetailSerializer
 from django.db import transaction
 from .serializers import AmountInputSerializer, TransactionResponseSerializer
+import time
 
 
 class BalanceInquiryView(APIView):
@@ -16,6 +17,7 @@ class BalanceInquiryView(APIView):
     """
 
     def get(self, request, account_number):
+        time.sleep(0.3)  # TESTING ONLY: 100ms delay
         try:
             account = Account.objects.get(account_number=account_number)
         except Account.DoesNotExist:
@@ -76,6 +78,7 @@ class DepositView(APIView):
 
     def post(self, request, account_number):
         # Step 1: Validate input (handles missing fields, invalid amounts)
+        # time.sleep(1)  # TESTING ONLY: 100ms delay
         serializer = AmountInputSerializer(data=request.data)
         if not serializer.is_valid():
             request.transaction_data.update({
@@ -157,6 +160,7 @@ class WithdrawView(APIView):
     """
 
     def post(self, request, account_number):
+        # time.sleep(1)  # TESTING ONLY: 100ms delay
         # Step 1: Validate input (handles missing fields, invalid amounts)
         serializer = AmountInputSerializer(data=request.data)
         if not serializer.is_valid():

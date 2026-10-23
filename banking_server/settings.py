@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'transactions',
+    'drf_spectacular',
 ]
 
 MIDDLEWARE = [
@@ -137,6 +138,13 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 REST_FRAMEWORK = {
     'EXCEPTION_HANDLER': 'transactions.exceptions.custom_exception_handler',
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Mini Banking Transaction Server API',
+    'DESCRIPTION': 'Distributed Systems Assignment 1',
+    'VERSION': '1.0.0',
 }
 
 # Base directory for log files
